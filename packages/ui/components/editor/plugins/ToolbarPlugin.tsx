@@ -21,6 +21,7 @@ import {
   $getSelection,
   $insertNodes,
   $isRangeSelection,
+  $isTextNode,
   FORMAT_TEXT_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from "lexical";
@@ -364,41 +365,47 @@ export default function ToolbarPlugin(props: TextEditorProps) {
   }, [props.updateTemplate]);
 
   useEffect(() => {
+    const unregister = editor.registerUpdateListener(({ editorState, prevEditorState }) => {
+      editorState.read(() => {
+        const textInHtml = $generateHtmlFromNodes(editor).replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+        props.setText(
+          textInHtml.replace(
+            /<p\s+class="editor-paragraph"[^>]*>\s*<br>\s*<\/p>/g,
+            "<p class='editor-paragraph'></p>"
+          )
+        );
+      });
+      if (!prevEditorState._selection) editor.blur();
+    });
+
     if (!props.setFirstRender) return;
 
     props.setFirstRender(false);
-    return editor.update(() => {
+    editor.update(() => {
       const root = $getRoot();
 
       // removes current nodes to avoid duplicate content
-      const currentNodes = root.getChildren();
-      for (const node of currentNodes) {
-        node.remove();
-      }
+      root.getChildren().forEach((node) => node.remove());
 
       // convert input text to DOM and insert nodes
       const parser = new DOMParser();
       const dom = parser.parseFromString(props.getText(), "text/html");
 
       const nodes = $generateNodesFromDOM(editor, dom);
-      $insertNodes(nodes);
-
-      nodes[nodes.length - 1]?.select();
-
-      const unregister = editor.registerUpdateListener(({ editorState, prevEditorState }) => {
-        editorState.read(() => {
-          const textInHtml = $generateHtmlFromNodes(editor).replace(/&lt;/g, "<").replace(/&gt;/g, ">");
-          props.setText(
-            textInHtml.replace(
-              /<p\s+class="editor-paragraph"[^>]*>\s*<br>\s*<\/p>/g,
-              "<p class='editor-paragraph'></p>"
-            )
-          );
-        });
-        if (!prevEditorState._selection) editor.blur();
+      // test nodes can't be inserted directly on the root
+      const safeNodes = nodes.map((node) => {
+        if ($isTextNode(node)) {
+          return $createParagraphNode().append(node);
+        }
+        return node;
       });
-      return () => unregister();
+
+      $insertNodes(safeNodes);
+
+      safeNodes[nodes.length - 1]?.select();
     });
+
+    return () => unregister();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
